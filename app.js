@@ -1,188 +1,50 @@
-import { chapters, emptyState, saveAnswer, countAnswers, nextQuestion, answerKey, bookText, restoreState, saveProfile, lifeStages, timelineEntries } from './model.js';
-const KEY = 'tsuzuri.life.v1';
-let storageAvailable = true;
-let state;
-try { state = restoreState(localStorage.getItem(KEY)); } catch { state = emptyState(); storageAvailable = false; }
-let selected = 0, currentChapter = 0, currentQuestion = 0;
-let draftTimer;
-let editingProfile = false;
-const icons = {
- book: '<path d="M12 6v15m0-15C9 4 5 4 2 5v14c4-1 7 0 10 2 3-2 6-3 10-2V5c-3-1-7-1-10 1Z"/>',
- grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
- chat: '<path d="M21 11a9 9 0 0 1-9 9H4l-3 2 1-7a9 9 0 1 1 19-4Z"/><path d="M7 10h10M7 14h6"/>',
- sun: '<circle cx="12" cy="12" r="4"/><path d="M12 1v2m0 18v2M1 12h2m18 0h2M4 4l2 2m12 12 2 2M4 20l2-2M18 6l2-2"/>',
- home: '<path d="m3 10 9-7 9 7v11H3Zm6 11v-8h6v8"/>',
- spark: '<path d="m12 2 2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5Z"/>',
- path: '<path d="M4 21V9a3 3 0 0 1 6 0v7a3 3 0 0 0 6 0V3m-4 4 4-4 4 4"/>',
- heart: '<path d="M20 4c-3-3-7-1-8 1-1-2-5-4-8-1-6 6 8 16 8 16S26 10 20 4Z"/>',
- leaf: '<path d="M20 3C8 1 1 9 5 16s16 3 15-13ZM4 21 16 9"/>',
- arrow: '<path d="M4 12h16m-6-6 6 6-6 6"/>',
- check: '<path d="m5 12 4 4L19 6"/>',
- close: '<path d="m6 6 12 12M6 18 18 6"/>',
- download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',
- settings: '<circle cx="12" cy="8" r="4"/><path d="M4 22v-3a8 8 0 0 1 16 0v3"/>',
- lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
- clock: '<circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>',
- chevron: '<path d="m9 5 7 7-7 7"/>',
- pen: '<path d="m4 16-1 5 5-1L21 7l-4-4ZM14 6l4 4"/>',
- headphones: '<path d="M3 14v-3a9 9 0 0 1 18 0v3M3 12h4v8H3zm14 0h4v8h-4z"/>'
-};
-const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.book}</svg>`;
-const escape = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-function toast(text) { const el = document.querySelector('#toast'); el.textContent = text; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 4200); }
-function persist() {
-  try { localStorage.setItem(KEY, JSON.stringify(state)); return true; }
-  catch { storageAvailable = false; toast('このブラウザに保存できませんでした。本をダウンロードして保管してください。'); return false; }
+import { chapters, emptyState, restoreState, saveProfile, saveAnswer, answerKey, countAnswers, nextQuestion, chapterSource, sourceFingerprint, saveManuscript, approvedChapters, manuscriptText } from './model.js';
+const KEY='tsuzuri.life.v1';
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let state=emptyState();try{state=restoreState(localStorage.getItem(KEY));}catch{}
+let screen=state.profileComplete?'talk':'profile',chapter=chapters.findIndex((_,i)=>nextQuestion(state,i)!==-1);if(chapter<0)chapter=0;
+let question=Math.max(0,nextQuestion(state,chapter)),followup=null,busy=false,configured=false,error='',editing=false;
+try{const cursor=JSON.parse(localStorage.getItem(KEY+'.cursor'));if(state.profileComplete&&cursor&&Number.isInteger(cursor.chapter)&&chapters[cursor.chapter]&&Number.isInteger(cursor.question)&&cursor.question>=0&&cursor.question<3){chapter=cursor.chapter;question=cursor.question;screen=['talk','review','book'].includes(cursor.screen)?cursor.screen:'talk';if(cursor.followup&&typeof cursor.followup.question==='string')followup={question:cursor.followup.question.slice(0,1000)};}}catch{}
+let accessCode='';try{accessCode=sessionStorage.getItem('tsuzuri.access')||'';}catch{}
+const bookIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 5v16M12 5C9 3 5 3 2 4v15c4-1 7 0 10 2 3-2 6-3 10-2V4c-3-1-7-1-10 1Z"/></svg>';
+function notify(text){const el=document.querySelector('#toast');el.textContent=text;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),3500);}
+function persist(next=state){try{localStorage.setItem(KEY,JSON.stringify(next));state=next;return true;}catch{error='端末に保存できませんでした。ブラウザの保存設定を確認してください。';return false;}}
+function draftKey(){return `${KEY}.interview.${chapter}.${question}.${followup?'followup':'answer'}`;}
+function readDraft(fallback=''){try{return localStorage.getItem(draftKey())??fallback;}catch{return fallback;}}
+function saveDraft(){const field=document.querySelector('#answer');if(!field)return;try{localStorage.setItem(draftKey(),field.value);localStorage.setItem(draftKey()+'.year',document.querySelector('#year')?.value||'');document.querySelector('#draft-status').textContent='入力途中の文章を保存しました';}catch{document.querySelector('#draft-status').textContent='入力途中の保存ができません。';}}
+async function api(action,items){const response=await fetch('/api/'+action,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+accessCode},body:JSON.stringify({chapter,name:state.name,profile:state.profile,items}),signal:AbortSignal.timeout(55000)});const body=await response.json();if(!response.ok){if(response.status===401)openAccess();throw new Error(body.error||'処理を完了できませんでした。');}return body;}
+function nav(to){if(busy)return;saveDraft();error='';followup=null;screen=to;render();window.scrollTo({top:0,behavior:'smooth'});}
+function stepper(){const step=screen==='profile'?0:screen==='talk'?1:2;return `<ol class="flow-steps" aria-label="本ができるまで">${['基本情報を教える','一問ずつお話しする','文章を確認して本にする'].map((t,i)=>`<li class="${i===step?'current':i<step?'finished':''}" ${i===step?'aria-current="step"':''}><span>${i<step?'✓':i+1}</span>${t}</li>`).join('')}</ol>`;}
+function profileView(){return `<section class="welcome"><div><span class="eyebrow">あなたの言葉から、家族の一冊へ。</span><h1>うまく書かなくて、<br>大丈夫です。</h1><p>質問にひとつずつ答えるだけ。<br>お話を聞きながら、人生の物語に整えていきます。</p><div class="welcome-note">約5分ずつ、途中でやめても続きから。</div></div><img src="/public/memoir-hero.png" alt="布張りの本と昔の家族写真のイメージ"></section><section class="profile-step"><div><span class="eyebrow">はじめに</span><h2>どなたの人生を残しますか？</h2><p>ご自身のお名前を教えてください。<br>生まれた年や場所は、分かる範囲で大丈夫です。</p></div><form id="profile-form"><label>お名前 <small>必須</small><input name="name" required maxlength="40" autocomplete="name" placeholder="例：山田 さちこ" value="${state.name==='あなた'?'':esc(state.name)}"></label><div class="form-row"><label>生まれた年 <small>任意</small><input name="birthYear" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="1960（西暦）" value="${esc(state.profile.birthYear)}"></label><label>生まれた場所 <small>任意</small><input name="birthplace" maxlength="200" placeholder="例：広島県尾道市" value="${esc(state.profile.birthplace)}"></label></div><label>幼い頃の家族 <small>任意</small><input name="childhoodFamily" maxlength="500" placeholder="例：父、母、兄" value="${esc(state.profile.childhoodFamily)}"></label><p class="error" role="alert">${esc(error)}</p><button class="primary" type="submit">保存して、最初の質問へ <span>→</span></button></form></section>`;}
+function chapterNav(){return `<aside class="chapter-nav"><span class="eyebrow">人生を、順番に。</span><ol>${chapters.map((c,i)=>`<li><button data-chapter="${i}" class="${i===chapter?'selected':''}" ${busy?'disabled':''}><span class="chapter-nav-number">${state.manuscripts[i]?.approved&&state.manuscripts[i].source===sourceFingerprint(state,i)?'✓':i+1}</span><span>${c.title}<small>${countAnswers(state,i)} / 3 のお話${state.manuscripts[i]?.approved?' · 原稿あり':''}</small></span></button></li>`).join('')}</ol><button class="quiet" data-action="profile">基本情報を修正する</button><p>話したくないことは飛ばせます。<br>いつでも続きから再開できます。</p></aside>`;}
+function talkView(){const c=chapters[chapter],key=answerKey(chapter,question);const saved=state.answers[key];let year=state.eventYears[key]||'';try{year=localStorage.getItem(draftKey()+'.year')??year;}catch{}
+return `<div class="working-layout">${chapterNav()}<section class="interview"><div class="chapter-top"><span class="eyebrow">第${chapter+1}章 · ${c.sub}</span><span>この章の質問 ${question+1} / 3</span></div><h1>${c.title}</h1><div class="question-meter"><span style="width:${(question+1)/3*100}%"></span></div>${followup?`<div class="saved-answer"><span>あなたのお話</span><p>${esc(saved)}</p></div>`:''}<div class="interviewer"><span class="interviewer-avatar">つ</span><div><span>つづりの聞き手 ${configured?'<small>AI接続済み</small>':'<small>ガイド付き質問</small>'}</span><h2>${esc(followup?.question||c.questions[question])}</h2><p>${followup?'その場面や気持ちを、もう少し聞かせてください。':'短い言葉や箇条書きでも大丈夫。文章はあとで整えます。'}</p></div></div><form id="answer-form"><label class="sr-only" for="answer">あなたのお話</label><textarea id="answer" maxlength="10000" placeholder="例：尾道で育ちました。兄と海まで走って遊んだことを覚えています。">${esc(readDraft(followup?'':saved||''))}</textarea>${!followup?`<details class="optional-date"><summary>いつ頃のお話か、分かれば追加する（任意）</summary><label for="year">年代・年齢</label><input id="year" maxlength="40" value="${esc(year)}" placeholder="例：1970年ごろ、10歳のとき"></details>`:''}<div id="draft-status" class="save-status">入力途中も、このブラウザに保存します</div><p class="error" role="alert">${esc(error)}</p><div class="talk-actions"><button type="button" class="quiet" id="skip" ${busy?'disabled':''}>${followup?'詳しいお話はあとにする':'この質問はあとで'}</button><button type="submit" class="primary" ${busy?'disabled':''}>${busy?'聞き手が考えています…':followup?'保存して、次の質問へ':'このお話を保存する'} <span>→</span></button></div></form><div class="what-next"><strong>このあと</strong><span>${followup?'次の質問へ進みます。':'お話を保存すると、もう少し詳しく聞くか、次の質問に進めます。'}</span></div>${countAnswers(state,chapter)?`<div class="chapter-end"><div><strong>今日はここまででも、大丈夫。</strong><span>${countAnswers(state,chapter)}のお話を残しました。途中でも原稿を作れます。</span></div><button class="secondary" data-action="review" ${busy?'disabled':''}>この章を文章にする →</button></div>`:''}</section></div>`;}
+function reviewView(){const draft=state.manuscripts[chapter],stale=draft&&draft.source!==sourceFingerprint(state,chapter),source=chapterSource(state,chapter);return `<div class="working-layout">${chapterNav()}<section class="review"><span class="eyebrow">第${chapter+1}章 · 原稿を確認</span><h1>${chapters[chapter].title}</h1><p class="review-intro">お話した内容を、読み物として整えます。<br>事実や言葉づかいを確認し、あなたらしい一章にしましょう。</p>${stale?'<p class="notice">原稿を作った後に、お話が更新されています。文章を整え直して確認してください。</p>':''}${!draft?`<div class="editor-empty"><span class="editor-symbol">${bookIcon}</span><h2>お話が、物語になるところ。</h2><p>出来事を順番につなぎ、短いメモも自然な文章に。<br>話していない事実や気持ちは、勝手に付け加えません。</p><button class="primary" id="generate" ${busy||!source.length?'disabled':''}>${busy?'章の下書きを作成しています…':'AIで章の下書きをつくる'} →</button>${!configured?'<p class="connection-note">AI編集はまだ未接続です。下の「AI編集の設定」で準備できます。</p>':''}</div>`:`<div class="manuscript-label"><span>${draft.origin==='ai'?'AIが整えた下書き':'ご自身で編集した下書き'} · ${draft.approved&&!stale?'確認済み':'内容の確認が必要です'}</span><button class="quiet" id="generate" ${busy?'disabled':''}>${busy?'文章を整えています…':'AIで整え直す'}</button></div><label for="manuscript" class="sr-only">章の原稿を編集</label><textarea id="manuscript" class="manuscript" maxlength="30000" placeholder="ここに章の文章をつづってください。">${esc(draft.text)}</textarea><p class="save-status" id="manuscript-status">そのまま修正できます。変更は自動保存します。</p><label class="approval"><input type="checkbox" id="approve-check" ${draft.approved&&!stale?'checked':''}>事実と表現を確認しました</label><button class="primary" id="approve" ${busy?'disabled':''}>この原稿を本に採用する →</button>`}<p class="error" role="alert">${esc(error)}</p><details class="source-notes"><summary>元のお話を確認する（${source.length}件）</summary>${source.map(s=>`<article><h3>${esc(s.question)}</h3><p>${esc(s.answer)}</p>${s.followups.map(f=>`<h4>${esc(f.question)}</h4><p>${esc(f.answer)}</p>`).join('')}</article>`).join('')}</details><div class="review-bottom"><button class="quiet" data-action="talk">← お話に戻る</button><button class="quiet" id="manual">自分で原稿を書く</button></div></section></div>`;}
+function bookView(){const approved=approvedChapters(state);return `<section class="reader"><div class="reader-heading"><div><span class="eyebrow">確認した原稿だけを、一冊に。</span><h1>${esc(state.name)}の人生の物語</h1><p>${approved} / 6 章を本に採用しました。</p></div><button class="secondary" id="download" ${approved?'':'disabled'}>本をダウンロード ↓</button></div>${chapters.map((c,i)=>{const d=state.manuscripts[i];return d?.approved&&d.source===sourceFingerprint(state,i)?`<article class="reading-chapter"><span class="eyebrow">第${i+1}章</span><h2>${c.title}</h2><div class="prose">${esc(d.text).replaceAll('\n','<br>')}</div><button class="quiet" data-review="${i}">この原稿を修正する</button></article>`:'';}).join('')}${!approved?`<div class="editor-empty"><h2>まずは、一章から。</h2><p>お話を残し、章の下書きを確認すると、ここに本ができます。<br>入力したメモがそのまま本になることはありません。</p><button class="primary" data-action="talk">お話をする →</button></div>`:''}<button class="primary" id="next-chapter">${approved===6?'お話を振り返る':'次の章のお話へ'} →</button></section>`;}
+function render(){try{localStorage.setItem(KEY+'.cursor',JSON.stringify({screen,chapter,question,followup}));}catch{}document.querySelector('#app').innerHTML=`<div class="v2"><header class="v2-header"><a href="#" id="brand">${bookIcon}<span>つづり<small>人生を、家族の一冊に。</small></span></a><nav aria-label="メイン"><button class="${screen==='talk'||screen==='profile'?'active':''}" data-action="talk">お話をする</button><button class="${screen==='book'?'active':''}" data-action="book">できた本 <span>${approvedChapters(state)}</span></button></nav></header><main class="v2-main">${stepper()}${screen==='profile'?profileView():screen==='talk'?talkView():screen==='review'?reviewView():bookView()}<footer class="v2-footer"><span>お話・下書きはこのブラウザに保存されます。<br>AI編集するときは、この章のお話をAIサービスへ送信します。</span><button class="quiet" id="ai-settings">AI編集の設定${configured?' · 接続済み':' · 未接続'}</button></footer></main></div>`;
+ document.querySelector('#brand').onclick=e=>{e.preventDefault();nav(state.profileComplete?'talk':'profile');};
+ document.querySelectorAll('[data-action]').forEach(el=>el.onclick=()=>nav(el.dataset.action==='talk'&&!state.profileComplete?'profile':el.dataset.action));
+ document.querySelectorAll('[data-chapter]').forEach(el=>el.onclick=()=>{saveDraft();chapter=Number(el.dataset.chapter);question=Math.max(0,nextQuestion(state,chapter));followup=null;error='';screen='talk';render();window.scrollTo({top:0,behavior:'smooth'});});
+ document.querySelectorAll('[data-review]').forEach(el=>el.onclick=()=>{chapter=Number(el.dataset.review);nav('review');});
+ document.querySelector('#ai-settings').onclick=openAccess;
+ const pf=document.querySelector('#profile-form');if(pf)pf.onsubmit=e=>{e.preventDefault();try{if(persist(saveProfile(state,Object.fromEntries(new FormData(pf))))){nav('talk');}}catch(e){error=e.message;pf.querySelector('.error').textContent=error;}};
+ const af=document.querySelector('#answer-form');if(af){af.onsubmit=submitAnswer;document.querySelector('#answer').oninput=saveDraft;document.querySelector('#year')?.addEventListener('input',saveDraft);document.querySelector('#skip').onclick=advance;}
+ document.querySelector('#generate')?.addEventListener('click',generate);
+ document.querySelector('#manual')?.addEventListener('click',()=>{if(busy)return;if(!state.manuscripts[chapter]){const next=structuredClone(state);next.manuscripts[chapter]={text:'',source:sourceFingerprint(state,chapter),origin:'manual',approved:false};if(!persist(next))return;}render();document.querySelector('#manuscript').focus();});
+ document.querySelector('#manuscript')?.addEventListener('input',e=>{const next=structuredClone(state);next.manuscripts[chapter]={text:e.target.value,source:sourceFingerprint(state,chapter),origin:state.manuscripts[chapter].origin,approved:false};if(persist(next)){document.querySelector('#manuscript-status').textContent='原稿の変更を保存しました。採用する前にもう一度確認してください。';document.querySelector('#approve-check').checked=false;}});
+ document.querySelector('#approve')?.addEventListener('click',()=>{if(!state.manuscripts[chapter]?.text.trim()){error='原稿の文章を入力してください。';render();return;}if(!document.querySelector('#approve-check').checked){error='事実と表現を確認してから、チェックを入れてください。';render();return;}const next=structuredClone(state);next.manuscripts[chapter].approved=true;next.manuscripts[chapter].source=sourceFingerprint(state,chapter);if(persist(next))nav('book');});
+ document.querySelector('#next-chapter')?.addEventListener('click',()=>{const next=chapters.findIndex((_,i)=>i>chapter&&!state.manuscripts[i]?.approved);chapter=next<0?0:next;question=Math.max(0,nextQuestion(state,chapter));nav('talk');});
+ document.querySelector('#download')?.addEventListener('click',()=>{const url=URL.createObjectURL(new Blob(['\uFEFF'+manuscriptText(state)],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=`${state.name}の人生の物語.txt`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
 }
-function titleForBook() { return state.name === 'あなた' ? '私の人生の物語' : `${state.name}の人生の物語`; }
-function profileForm() {
-  return `<section class="basic-section" id="basic-information" aria-labelledby="basic-title"><div class="basic-intro"><span class="eyebrow">STEP 01 · ABOUT YOU</span><h2 id="basic-title">まずは、あなたの<br>基本情報から。</h2><p>いつ、どこで生まれ、どんな家族と暮らしたのか。<br>人生のはじまりを教えてください。</p><div class="basic-steps"><span class="current">01 基本情報</span><span>02 人生をたどる</span><span>03 一冊の本に</span></div><small>分からないことは空欄で大丈夫。あとから直せます。</small></div><form id="profile-form"><div class="profile-form-grid"><label>お名前 <span class="required">必須</span><input name="name" autocomplete="name" maxlength="40" required placeholder="例：山田 さちこ" value="${state.name === 'あなた' ? '' : escape(state.name)}"></label><label>生まれた年 <span>任意</span><input name="birthYear" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="例：1960（西暦）" value="${escape(state.profile.birthYear)}"></label><label class="full">生まれた場所 <span>任意</span><input name="birthplace" maxlength="200" placeholder="例：広島県尾道市" value="${escape(state.profile.birthplace)}"></label><label class="full">幼い頃、一緒に暮らしていた家族 <span>任意</span><input name="childhoodFamily" maxlength="500" placeholder="例：父、母、祖母、2歳上の兄" value="${escape(state.profile.childhoodFamily)}"></label></div><p id="profile-error" role="alert"></p><button class="button primary" type="submit">基本情報を保存して、生い立ちへ${icon('arrow')}</button>${state.profileComplete ? '<button type="button" class="text-button" id="profile-cancel">編集をやめる</button>' : ''}</form></section>`;
+async function submitAnswer(e){e.preventDefault();if(busy)return;const text=document.querySelector('#answer').value.trim();if(!text){error='ひとこと入力するか、「この質問はあとで」を選んでください。';render();return;}const key=answerKey(chapter,question);if(followup){const next=structuredClone(state);next.followups[key]=[...(next.followups[key]||[]),{question:followup.question,answer:text}];if(!persist(next)){render();return;}try{localStorage.removeItem(draftKey());}catch{}advance();return;}
+ const next=saveAnswer(state,chapter,question,text);next.eventYears[key]=document.querySelector('#year')?.value.trim()||'';if(!persist(next)){render();return;}try{localStorage.removeItem(draftKey());localStorage.removeItem(draftKey()+'.year');}catch{}
+ error='';busy=true;render();let prompt='そのお話の中で、いちばんよく覚えている出来事を教えてください。どなたと、どんなことがありましたか？';
+ if(configured){try{const result=await api('followup',[{question:chapters[chapter].questions[question],answer:text,year:state.eventYears[key],followups:state.followups[key]||[]}]);prompt=result.question;}catch(e){error=e.message;}}
+ followup={question:prompt};busy=false;render();document.querySelector('#answer').focus();
 }
-function timelineSection() {
-  if (!state.profileComplete) return '';
-  const entries = timelineEntries(state);
-  return `<section class="life-timeline" aria-labelledby="timeline-title"><div class="section-heading"><div><span class="eyebrow">LIFE HISTORY</span><h2 id="timeline-title">${escape(state.name)}さんの歩んできた歴史</h2></div><span class="section-hint">年代が分からないお話は、人生の時期ごとに。</span></div><div class="timeline-list">${entries.map(entry => `<article class="timeline-entry"><div class="timeline-date"><strong>${escape(entry.year || '年代未記入')}</strong><span>${entry.stage}</span></div><div class="timeline-memory"><h3>${entry.key === 'birth' ? escape(entry.title) : escape(chapters[entry.chapter].title)}</h3><p>${escape(entry.text).replaceAll('\n', '<br>')}</p>${entry.chapter !== null ? `<button class="text-button" data-timeline-edit="${entry.key}">このお話を編集${icon('pen')}</button>` : ''}</div></article>`).join('')}</div>${entries.length === 1 ? '<p class="timeline-empty">生まれた場所から、幼い頃、学校、仕事へ。お話するたびに、人生の年表がつながります。</p>' : ''}</section>`;
-}
-function render() {
-  const count = countAnswers(state), percent = Math.round(count / 18 * 100), completed = chapters.filter((_, i) => countAnswers(state, i) === 3).length;
-  const c = chapters[selected];
-  const answers = c.questions.map((_, q) => state.answers[answerKey(selected, q)]).filter(Boolean);
-  document.querySelector('#app').innerHTML = `
-    <aside class="sidebar">
-      <a class="brand" href="/" aria-label="つづり ホーム"><span class="brand-mark">${icon('book')}</span><span>つづり<small>TSUZURI</small></span></a>
-      <div class="nav-label">あなたの物語</div>
-      <nav aria-label="メインメニュー">
-        <button class="nav-item active" data-action="home">${icon('grid')}マイストーリー<span class="nav-dot"></span></button>
-        <button class="nav-item" data-action="interview">${icon('chat')}お話をつづる</button>
-        <button class="nav-item" data-action="book">${icon('book')}本を読む</button>
-      </nav>
-      <div class="sidebar-note"><span class="small-flower">✳</span><p>何気ない思い出が、<br>誰かの宝物になる。</p><span>あなたのペースで、少しずつ。</span></div>
-      <div class="sidebar-bottom"><button class="nav-item" data-action="about">${icon('heart')}つづりについて</button><button class="profile" data-action="name"><span class="avatar">${escape(state.name === 'あなた' ? '私' : state.name.slice(0, 1))}</span><span>${state.name === 'あなた' ? '本に残すお名前' : escape(state.name)}<small>この端末に保存</small></span>${icon('chevron')}</button></div>
-    </aside>
-    <main>
-      <header class="topbar"><div class="breadcrumbs">あなたの物語 <span>/</span> <strong>マイストーリー</strong></div><span class="save-badge"><span></span>${storageAvailable ? 'この端末に自動保存' : '保存が利用できません'}</span></header>
-      <div class="main-content">
-        <div class="page-heading"><div><div class="eyebrow">MY STORY</div><h1>人生を、はじめから。</h1><p>いつ、どこで、何があったのか。あなたの歴史を一冊に。</p></div><button class="button secondary book-top" data-action="book">${icon('book')}本のプレビュー</button></div>
-        <section class="memoir-banner" aria-labelledby="memoir-heading"><img class="memoir-image" src="/public/memoir-hero.png" alt="布張りの本、懐かしい家族写真、手紙が陽の差す机に並ぶ、GPT Imageで制作したイメージ" fetchpriority="high"><div class="memoir-wash"></div><div class="memoir-copy"><span class="eyebrow">A LIFE, LOVINGLY PRESERVED</span><h2 id="memoir-heading">人生の記憶を、<br><em>一冊の本に。</em></h2><p>生まれた日のこと。夢中になった日々。<br>あなたが歩んだ歴史は、家族の宝物になる。</p><button class="button primary" data-action="interview">${state.profileComplete ? 'お話の続きをつづる' : '基本情報からはじめる'}${icon('arrow')}</button><div class="memoir-caption">YOUR LIFE. YOUR WORDS. YOUR STORY.</div></div><div class="memoir-image-note">記憶を、未来へつなぐ。</div></section>
-        ${!state.profileComplete || editingProfile ? profileForm() : `<div class="profile-summary"><div>${icon('settings')}<strong>${escape(state.name)}さん</strong><span>${escape(state.profile.birthYear ? state.profile.birthYear + '年生まれ' : '生年未記入')} ・ ${escape(state.profile.birthplace || '出生地未記入')}</span></div><button class="text-button" data-action="profile">基本情報を編集</button></div>`}
-        <section class="hero ${!state.profileComplete ? 'hero-after-profile' : ''}" aria-labelledby="hero-title"><div class="hero-copy"><span class="hero-kicker"><span></span>人生を、言葉にする時間。</span><h2 id="hero-title">生まれた場所から、<br>いまのあなたまで。<br><em>人生をたどろう。</em></h2><p>子どもの頃、学生時代、初めての仕事。<br>いつ、どこで、どんな日々を過ごしたのか。<br>ひとつずつ聞きながら、人生の歴史をつなぎます。</p><button class="button primary" data-action="interview">${icon('pen')}${!state.profileComplete ? '基本情報からはじめる' : state.started ? 'お話の続きをつづる' : '生い立ちのお話をはじめる'}${icon('arrow')}</button><span class="hero-foot">${icon('clock')}1回5分から。いつでも続きから。</span></div><div class="hero-art"><div class="art-frame"><img src="/public/memory.svg" alt="山あいの小さな家へ続く道を描いた、懐かしい風景のイラスト"><span class="art-caption">あの日の景色を、もう一度。</span></div><span class="art-side">EVERY LIFE IS A STORY WORTH TELLING</span><span class="art-seal">記憶を<br>つなぐ</span></div></section>
-        <section class="progress-strip" aria-label="執筆の進み具合"><div class="progress-main"><div class="progress-symbol">${icon('leaf')}</div><div><strong>物語は、少しずつ育っています。</strong><span>${count ? `${count}の思い出が、言葉になりました。` : 'まずは、ひとつの思い出から始めましょう。'}</span></div></div><div class="progress-metric"><strong>${count}<small> / 18</small></strong><span>答えた質問</span></div><div class="progress-metric"><strong>${completed}<small> / 6</small></strong><span>つづった章</span></div><div class="progress-bar-wrap"><div><span>本のできあがり</span><strong>${percent}%</strong></div><div class="progress-track" role="progressbar" aria-label="本のできあがり" aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100"><span style="width:${percent}%"></span></div></div></section>
-        ${timelineSection()}
-        <div class="story-layout"><section class="chapters-section"><div class="section-heading"><div><span class="eyebrow">CHAPTERS</span><h2>人生を、順番にたどる</h2></div><span class="section-hint">幼い頃から、今に向かって。</span></div><div class="chapter-grid">${chapters.map((ch, i) => {
-          const n = countAnswers(state, i);
-          return `<button class="chapter-card ${selected === i ? 'selected' : ''}" data-chapter="${i}" aria-pressed="${selected === i}"><div class="card-top"><span class="chapter-icon ${ch.icon}">${icon(ch.icon)}</span><span class="chapter-status ${n === 3 ? 'done' : n ? 'writing' : ''}">${n === 3 ? 'つづりました' : n ? 'お話し中' : 'これから'}</span></div><span class="chapter-number">CHAPTER ${String(i + 1).padStart(2,'0')}</span><h3>${ch.title}</h3><p>${lifeStages[i]} · ${ch.sub}</p><div class="card-bottom"><span>${n} / 3 のお話</span>${icon(n === 3 ? 'check' : 'arrow')}</div></button>`;
-        }).join('')}</div><div class="gentle-note">${icon('heart')}うまく話そうとしなくて大丈夫。あなたの言葉が、いちばんです。</div></section>
-        <aside class="book-preview"><div class="section-heading"><div><span class="eyebrow">YOUR BOOK</span><h2>できあがっていく、一冊。</h2></div></div><button class="book-object" data-action="book" aria-label="本のプレビューを開く"><div class="book-spine"></div><div class="book-cover"><span class="cover-tag">THE STORY OF MY LIFE</span><span class="cover-rule"></span><span class="cover-title">私という、<br>ひとつの物語。</span><div class="cover-plant">${icon('leaf')}</div><span class="cover-author">${state.name === 'あなた' ? 'あなた' : escape(state.name)} 著</span><span class="cover-brand">つ づ り</span></div></button><div class="preview-excerpt"><span>第${selected + 1}章　${c.title}</span><p>${answers.length ? escape(answers[0].slice(0, 75)) + (answers[0].length > 75 ? '…' : '') : 'ここに、あなたの言葉が並びます。<br>思い出をひとつ話すたびに、<br>本のページが増えていきます。'}</p></div><button class="preview-link" data-action="${answers.length ? 'book' : 'selected-interview'}">${answers.length ? '本をひらいてみる' : 'この章のお話を始める'}${icon('arrow')}</button></aside></div>
-        <footer><span>つづり <span class="footer-divider">|</span> 何気ない人生に、かけがえのない一冊を。</span><span>${icon('lock')}お話はこのブラウザの中に保存されます</span></footer>
-      </div>
-    </main>`;
-  document.querySelectorAll('[data-action]').forEach(el => el.addEventListener('click', () => action(el.dataset.action)));
-  const form = document.querySelector('#profile-form');
-  if (form) form.onsubmit = e => {
-    e.preventDefault();
-    try {
-      const wasComplete = state.profileComplete;
-      const next = saveProfile(state, Object.fromEntries(new FormData(form)));
-      const previous = state; state = next;
-      if (!persist()) { state = previous; return; }
-      editingProfile = false; render();
-      if (!wasComplete) openInterview(0); else toast('基本情報を更新しました。');
-    } catch (error) { document.querySelector('#profile-error').textContent = error.message; }
-  };
-  document.querySelector('#profile-cancel')?.addEventListener('click', () => { editingProfile = false; render(); });
-  document.querySelectorAll('[data-timeline-edit]').forEach(el => el.onclick = () => {
-    const [chapter, question] = el.dataset.timelineEdit.split(':').map(Number);
-    openInterview(chapter, question);
-  });
-  document.querySelectorAll('[data-chapter]').forEach(el => el.addEventListener('click', () => { selected = Number(el.dataset.chapter); render(); }));
-}
-function action(name) {
-  if (name === 'profile') { editingProfile = true; render(); document.querySelector('#basic-information').scrollIntoView({behavior:'smooth'}); }
-  if (name === 'interview') {
-    const available = chapters.findIndex((_, i) => nextQuestion(state, i) !== -1);
-    openInterview(available === -1 ? selected : available);
-  }
-  if (name === 'selected-interview') openInterview(selected);
-  if (name === 'book') openBook();
-  if (name === 'name') openName();
-  if (name === 'home') window.scrollTo({top:0,behavior:'smooth'});
-  if (name === 'about') {
-    const dialog = document.querySelector('#name-dialog');
-    dialog.innerHTML = `<button class="close-button" aria-label="閉じる">${icon('close')}</button><div class="eyebrow">ABOUT TSUZURI</div><h2 id="name-title">その人生を、未来へ。</h2><p class="about-text">子どもがまだ知らない、親の物語。<br>親がもう一度出会う、自分の人生。<br><br>つづりは、問いにひとつずつ答えながら、思い出を一冊に残すための場所です。話したくないことは飛ばして、あなたのペースで続けてください。<br><br>現在は試作品です。用意された質問でお話を集め、回答をそのまま章にまとめます。AIによる追加質問・文章編集は今後対応予定です。回答は外部に送信されません。<br><br>保存先はこのブラウザです。共有端末での利用にはご注意ください。大切なお話は「本を読む」からダウンロードして保管できます。</p>`;
-    dialog.querySelector('button').onclick = () => dialog.close(); dialog.showModal();
-  }
-}
-function draftKey() { return `${KEY}.draft.${currentChapter}.${currentQuestion}`; }
-function openInterview(chapter, question) {
-  if (!state.profileComplete) {
-    editingProfile = true; render(); document.querySelector('#basic-information').scrollIntoView({behavior:'smooth'});
-    document.querySelector('#profile-form input').focus();
-    return;
-  }
-  currentChapter = chapter; currentQuestion = question ?? nextQuestion(state, chapter);
-  if (currentQuestion === -1) currentQuestion = 0;
-  showQuestion(); document.querySelector('#interview-dialog').showModal();
-}
-function showQuestion() {
-  clearTimeout(draftTimer);
-  const c = chapters[currentChapter], dialog = document.querySelector('#interview-dialog');
-  let draft = state.answers[answerKey(currentChapter, currentQuestion)] || '';
-  try { draft = localStorage.getItem(draftKey()) ?? draft; } catch {}
-  dialog.innerHTML = `<div class="interview-header"><span class="interview-logo">${icon('book')}つづり</span><button class="close-button" aria-label="お話を中断して閉じる">${icon('close')}</button></div><div class="interview-body"><div class="eyebrow">CHAPTER ${String(currentChapter+1).padStart(2,'0')} · ${currentQuestion+1} / 3</div><h2 id="interview-title">${c.title}</h2><div class="question-dots">${c.questions.map((_, i)=>`<span class="${i === currentQuestion ? 'current' : state.answers[answerKey(currentChapter,i)] ? 'filled' : ''}"></span>`).join('')}</div><div class="question-label">${icon(c.icon)}${lifeStages[currentChapter]}の問いかけ</div><h3>${c.questions[currentQuestion]}</h3><p class="question-help">浮かんできたことから、自由に。短い言葉でも大丈夫です。</p><label for="answer" class="sr-only">あなたの回答</label><div class="event-date-field"><label for="event-year">いつ頃のお話ですか？ <span>任意・だいたいで大丈夫</span></label><input id="event-year" maxlength="40" placeholder="例：1975年ごろ、15歳のとき" value="${escape(state.eventYears[answerKey(currentChapter,currentQuestion)] || '')}"></div><textarea id="answer" placeholder="思い出を、あなたの言葉でつづってください。" maxlength="10000">${escape(draft)}</textarea><div class="answer-meta"><span id="draft-status">${storageAvailable ? '入力した文章もこの端末に自動保存されます' : '端末保存を利用できません'}</span><span id="char-count">${draft.length}文字</span></div><p id="answer-error" class="answer-error" role="alert"></p><div class="interview-actions"><button class="text-button" id="skip">あとで答える</button><button class="button primary" id="save-answer">お話を残して、次へ${icon('arrow')}</button></div><div class="interview-note">${icon('lock')}回答を外部に送信することはありません</div></div>`;
-  const field = dialog.querySelector('textarea');
-  const dateField = dialog.querySelector('#event-year');
-  try { dateField.value = localStorage.getItem(draftKey() + '.year') ?? dateField.value; } catch {}
-  const saveDraft = () => {
-    clearTimeout(draftTimer);
-    try { localStorage.setItem(draftKey(), field.value); localStorage.setItem(draftKey() + '.year', dateField.value); dialog.querySelector('#draft-status').textContent = '下書きを保存しました'; }
-    catch { storageAvailable = false; dialog.querySelector('#draft-status').textContent = '下書きを保存できませんでした'; }
-  };
-  dateField.oninput = () => { clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft, 350); };
-  field.oninput = () => { dialog.querySelector('#char-count').textContent = `${field.value.length}文字`; draftTimer = setTimeout(saveDraft, 350); };
-  dialog.querySelector('.close-button').onclick = () => { saveDraft(); dialog.close(); render(); toast(storageAvailable ? '続きは、いつでも。下書きを保存しました。' : '保存できませんでした。ブラウザの保存設定をご確認ください。'); };
-  dialog.oncancel = () => { saveDraft(); render(); };
-  dialog.querySelector('#save-answer').onclick = () => {
-    if (!field.value.trim()) { dialog.querySelector('#answer-error').textContent = 'ひとこと入力するか、「あとで答える」を選んでください。'; field.focus(); return; }
-    clearTimeout(draftTimer);
-    state = saveAnswer(state, currentChapter, currentQuestion, field.value);
-    state.eventYears[answerKey(currentChapter, currentQuestion)] = dateField.value.trim();
-    if (!persist()) return;
-    try { localStorage.removeItem(draftKey()); localStorage.removeItem(draftKey() + '.year'); } catch {}
-    render(); moveNext(false);
-  };
-  dialog.querySelector('#skip').onclick = () => { saveDraft(); moveNext(true); };
-  field.focus();
-}
-function moveNext(skipped) {
-  if (currentQuestion < 2) { currentQuestion++; showQuestion(); return; }
-  const dialog = document.querySelector('#interview-dialog'), chapter = currentChapter;
-  const complete = countAnswers(state, chapter) === 3;
-  dialog.innerHTML = `<div class="finished"><div class="finished-icon">${icon(complete ? 'check' : 'leaf')}</div><span class="eyebrow">A PAGE OF YOUR LIFE</span><h2 id="interview-title">${complete ? 'ひとつの章が、できました。' : '今日は、ここまで。'}</h2><p>${countAnswers(state, chapter)}のお話を本に残しました。<br>思い出を聞かせてくださって、ありがとうございます。<br>${skipped || !complete ? '答えていない質問には、いつでも戻れます。' : 'またひとつ、あなたの物語が増えました。'}</p><button class="button primary" id="read-chapter">本をひらいてみる${icon('arrow')}</button><button class="text-button" id="finish">マイストーリーへ戻る</button></div>`;
-  dialog.oncancel = null;
-  dialog.querySelector('#read-chapter').onclick = () => { dialog.close(); openBook(); };
-  dialog.querySelector('#finish').onclick = () => { selected = chapter; dialog.close(); render(); };
-}
-function openName() {
-  const dialog = document.querySelector('#name-dialog');
-  dialog.innerHTML = `<button class="close-button" aria-label="閉じる">${icon('close')}</button><span class="eyebrow">YOUR NAME</span><h2 id="name-title">本に残す、お名前。</h2><p>本の著者として表示されます。ニックネームでも大丈夫。</p><form><label for="author">お名前</label><input id="author" maxlength="40" required value="${state.name === 'あなた' ? '' : escape(state.name)}" placeholder="例：さちこ"><button class="button primary" type="submit">名前を保存する${icon('check')}</button></form>`;
-  dialog.querySelector('.close-button').onclick = () => dialog.close();
-  dialog.querySelector('form').onsubmit = e => { e.preventDefault(); const name = dialog.querySelector('input').value.trim(); if (!name) return; state.name = name; if (!persist()) return; render(); dialog.close(); toast('本の著者名を保存しました。'); };
-  dialog.showModal();
-}
-function openBook() {
-  const dialog = document.querySelector('#book-dialog');
-  const count = countAnswers(state);
-  dialog.innerHTML = `<div class="book-dialog-header"><div><span class="eyebrow">YOUR BOOK · ${count} のお話</span><h2 id="book-title">${escape(titleForBook())}</h2></div><button class="close-button" aria-label="本を閉じる">${icon('close')}</button></div><div class="book-dialog-body">${state.profileComplete ? `<section class="book-chapter"><span class="eyebrow">ABOUT THE AUTHOR</span><h3>人生のはじまり</h3><p>${escape(state.name)}<br>${escape(state.profile.birthYear ? state.profile.birthYear + '年生まれ' : '')}<br>${escape(state.profile.birthplace)}<br>${escape(state.profile.childhoodFamily)}</p></section>` : ''}${count ? chapters.map((c,i) => {
-    const answers = c.questions.map((_,q) => { const key = answerKey(i,q); return state.answers[key] ? {text: state.answers[key], year: state.eventYears[key]} : null; }).filter(Boolean);
-    return answers.length ? `<section class="book-chapter"><span class="eyebrow">CHAPTER ${String(i+1).padStart(2,'0')}</span><h3>${c.title}</h3>${answers.map(a => `${a.year ? `<span class="book-event-year">${escape(a.year)}</span>` : ''}<p>${escape(a.text).replaceAll('\n','<br>')}</p>`).join('')}<button class="text-button chapter-edit" data-edit="${i}">${icon('pen')}この章をつづる</button></section>` : '';
-  }).join('') : `<div class="empty-book">${icon('book')}<h3>最初の一ページは、<br>あなたの言葉から。</h3><p>お話をひとつ残すと、ここに本のページが生まれます。</p><button class="button primary" id="first-page">最初のお話をつづる${icon('arrow')}</button></div>`}</div><div class="book-dialog-footer"><span>あなたの回答をそのまま大切に残しています。</span><button class="button secondary" id="download" ${!count && !state.profileComplete ? 'disabled' : ''}>${icon('download')}本をダウンロード</button></div>`;
-  dialog.querySelector('.close-button').onclick = () => dialog.close();
-  dialog.querySelector('#first-page')?.addEventListener('click', () => { dialog.close(); openInterview(0); });
-  dialog.querySelectorAll('[data-edit]').forEach(el => el.onclick = () => { dialog.close(); openInterview(Number(el.dataset.edit)); });
-  dialog.querySelector('#download').onclick = () => {
-    const blob = new Blob(['\uFEFF' + bookText(state)], {type:'text/plain;charset=utf-8'}), url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = '私の人生の物語.txt'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); toast('本をテキストファイルでダウンロードしました。');
-  };
-  dialog.showModal();
-}
+function advance(){saveDraft();followup=null;error='';if(question<2){question++;screen='talk';}else{screen='review';}render();window.scrollTo({top:0,behavior:'smooth'});}
+async function generate(){if(busy)return;if(!configured){openAccess();return;}const source=chapterSource(state,chapter);if(!source.length){error='まずひとつ、お話を残してください。';render();return;}if(state.manuscripts[chapter]&&!confirm('今の下書きをAIで整え直します。手直しした内容も置き換わります。続けますか？'))return;busy=true;error='';render();try{const result=await api('draft',source);if(persist(saveManuscript(state,chapter,result.text,'ai')))notify('章の下書きができました。事実と表現を確認してください。');}catch(e){error=e.message;}finally{busy=false;render();}}
+function openAccess(){const d=document.querySelector('#name-dialog');d.innerHTML=`<div class="access-dialog"><button class="dialog-close" aria-label="閉じる">×</button><span class="eyebrow">家族だけで、安心して。</span><h2 id="name-title">AI編集の準備</h2>${configured?'<p>作成者から教わった家族の合言葉を入力してください。AI編集を使うときに必要です。</p><form id="access-form"><label>家族の合言葉<input type="password" id="access-code" required autocomplete="current-password"></label><button class="primary">合言葉を保存する</button></form>':'<p>AI編集はまだ接続されていません。お話を聞く・保存する機能は使えます。</p><p>サイトの作成者がVercelでAIキーと家族の合言葉を設定すると、追加質問と文章化を利用できます。</p><p class="connection-note">作成者向け：Vercelの環境変数に MEMOIR_AI_KEY と MEMOIR_ACCESS_CODE を設定し、再デプロイしてください。APIキーはこの画面へ入力しないでください。</p>'}<p>文章化の際、この章の回答をAIサービスへ送信します。作られた原稿はご自身で確認してから本に採用できます。</p></div>`;d.querySelector('.dialog-close').onclick=()=>d.close();d.querySelector('#access-form')?.addEventListener('submit',e=>{e.preventDefault();accessCode=d.querySelector('#access-code').value;try{sessionStorage.setItem('tsuzuri.access',accessCode);}catch{}d.close();notify('合言葉をこのタブに保存しました。');});if(!d.open)d.showModal();}
+window.addEventListener('pagehide',saveDraft);
 render();
+fetch('/api/status').then(r=>r.ok?r.json():{configured:false}).then(s=>{configured=Boolean(s.configured);const el=document.querySelector('#ai-settings');if(el)el.textContent='AI編集の設定'+(configured?' · 接続済み':' · 未接続');const badge=document.querySelector('.interviewer small');if(badge)badge.textContent=configured?'AI接続済み':'ガイド付き質問';}).catch(()=>{});

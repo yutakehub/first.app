@@ -6,7 +6,7 @@ export const chapters = [
   { title: '大切なあなたへ', sub: '子どもに伝えたいこと', icon: 'heart', questions: ['親になった日の気持ちを覚えていますか？', '子どもと過ごした日々で、心に残っていることは何ですか？', 'これからの子どもに、伝えておきたい言葉はありますか？'] },
   { title: 'これからの物語', sub: '今とこれから', icon: 'leaf', questions: ['今、幸せを感じるのはどんなときですか？', 'これからやってみたいことはありますか？', 'あなたにとって、よい人生とはどんな人生でしょうか？'] }
 ];
-export const emptyState = (name = 'あなた') => ({ name, answers: {}, started: false, profile: { birthYear: '', birthplace: '', childhoodFamily: '' }, profileComplete: false, eventYears: {} });
+export const emptyState = (name = 'あなた') => ({ name, answers: {}, started: false, profile: { birthYear: '', birthplace: '', childhoodFamily: '' }, profileComplete: false, eventYears: {}, followups: {}, manuscripts: {} });
 export function saveProfile(state, values) {
   const name = String(values.name || '').trim();
   const birthYear = String(values.birthYear || '').trim();
@@ -36,7 +36,30 @@ export function timelineEntries(state) {
 export const answerKey = (chapter, question) => `${chapter}:${question}`;
 export function saveAnswer(state, chapter, question, answer) {
   if (!chapters[chapter]?.questions[question] || !answer.trim()) throw new Error('有効な回答を入力してください');
-  return { ...state, started: true, answers: { ...state.answers, [answerKey(chapter, question)]: answer.trim() } };
+  const next = { ...state, started: true, answers: { ...state.answers, [answerKey(chapter, question)]: answer.trim() } };
+  return next;
+}
+export function chapterSource(state, chapter) {
+  return chapters[chapter].questions.map((question, q) => {
+    const key = answerKey(chapter, q);
+    return { question, answer: state.answers[key] || '', year: state.eventYears[key] || '', followups: state.followups?.[key] || [] };
+  }).filter(item => item.answer);
+}
+export function sourceFingerprint(state, chapter) {
+  return JSON.stringify({ name: state.name, profile: state.profile, items: chapterSource(state, chapter) });
+}
+export function saveManuscript(state, chapter, text, origin = 'manual') {
+  if (!text.trim()) throw new Error('章の文章を入力してください。');
+  return { ...state, manuscripts: { ...state.manuscripts, [chapter]: { text: text.trim(), source: sourceFingerprint(state, chapter), origin, approved: false } } };
+}
+export function approvedChapters(state) {
+  return chapters.filter((_, i) => state.manuscripts?.[i]?.approved && state.manuscripts[i].source === sourceFingerprint(state, i)).length;
+}
+export function manuscriptText(state) {
+  return `${state.name}の人生の物語\n\n` + chapters.map((c, i) => {
+    const draft = state.manuscripts?.[i];
+    return draft?.approved && draft.source === sourceFingerprint(state, i) ? `第${i + 1}章　${c.title}\n\n${draft.text}` : '';
+  }).filter(Boolean).join('\n\n──────────\n\n');
 }
 export function countAnswers(state, chapter) {
   return chapters.reduce((total, c, i) => total + (chapter === undefined || chapter === i ? c.questions.filter((_, q) => Boolean(state.answers[answerKey(i, q)])).length : 0), 0);
@@ -67,6 +90,14 @@ export function restoreState(raw) {
     Object.keys(answers).forEach(key => { if (typeof data.eventYears?.[key] === 'string') eventYears[key] = data.eventYears[key].slice(0, 40); });
     const profile = {};
     for (const key of ['birthYear', 'birthplace', 'childhoodFamily']) profile[key] = typeof data.profile?.[key] === 'string' ? data.profile[key].slice(0, 500) : '';
-    return { name: data.name.slice(0, 40), answers, started: Boolean(data.started), profile, profileComplete: Boolean(data.profileComplete), eventYears };
+    const followups = {}, manuscripts = {};
+    for (const key of Object.keys(answers)) {
+      if (Array.isArray(data.followups?.[key])) followups[key] = data.followups[key].filter(x => typeof x?.question === 'string' && typeof x?.answer === 'string').slice(0, 5).map(x => ({ question: x.question.slice(0, 1000), answer: x.answer.slice(0, 10000) }));
+    }
+    chapters.forEach((_, i) => {
+      const draft = data.manuscripts?.[i];
+      if (typeof draft?.text === 'string' && typeof draft?.source === 'string') manuscripts[i] = {text: draft.text.slice(0, 30000), source: draft.source, origin: draft.origin === 'ai' ? 'ai' : 'manual', approved: Boolean(draft.approved)};
+    });
+    return { name: data.name.slice(0, 40), answers, started: Boolean(data.started), profile, profileComplete: Boolean(data.profileComplete), eventYears, followups, manuscripts };
   } catch { return emptyState(); }
 }

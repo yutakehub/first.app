@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyState, saveAnswer, countAnswers, nextQuestion, bookText, restoreState, saveProfile, timelineEntries } from './model.js';
+import { emptyState, saveAnswer, countAnswers, nextQuestion, bookText, restoreState, saveProfile, timelineEntries, saveManuscript, sourceFingerprint, approvedChapters, manuscriptText } from './model.js';
 test('answers advance chapters, updates do not inflate progress, and the book retains the author’s words', () => {
   let state = emptyState('さちこ');
   assert.equal(nextQuestion(state, 0), 0);
@@ -17,6 +17,22 @@ test('answers advance chapters, updates do not inflate progress, and the book re
   assert.match(bookText(state), /第1章　はじまりの風景/);
   assert.match(bookText(state), /山の近くで育ちました。/);
   assert.doesNotMatch(bookText(state), /海の近く|第2章/);
+});
+test('the book exports reviewed prose, excludes raw answers and invalidates approval when sources change', () => {
+  let state=saveAnswer(emptyState('母'),0,0,'尾道。兄と海へ。');
+  state=saveManuscript(state,0,'幼い頃の私は、尾道で兄と海へ向かった。','ai');
+  assert.equal(approvedChapters(state),0);
+  assert.doesNotMatch(manuscriptText(state),/尾道。兄と海へ。|幼い頃の私は/);
+  state.manuscripts[0].approved=true;
+  assert.equal(approvedChapters(state),1);
+  assert.match(manuscriptText(state),/幼い頃の私は/);
+  assert.doesNotMatch(manuscriptText(state),/尾道。兄と海へ。/);
+  assert.deepEqual(restoreState(JSON.stringify(state)),state);
+  const before=sourceFingerprint(state,0);
+  state=saveAnswer(state,0,0,'実際は姉と海へ行きました。');
+  assert.notEqual(sourceFingerprint(state,0),before);
+  assert.equal(approvedChapters(state),0);
+  assert.doesNotMatch(manuscriptText(state),/兄と海へ向かった/);
 });
 test('basic information persists with answers, the timeline orders supplied years and does not invent dates', () => {
   assert.throws(() => saveProfile(emptyState(), { name: '  ' }));
