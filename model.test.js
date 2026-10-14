@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { emptyState, saveAnswer, countAnswers, nextQuestion, bookText, restoreState, saveProfile, timelineEntries } from './model.js';
+test('answers advance chapters, updates do not inflate progress, and the book retains the author’s words', () => {
+  let state = emptyState('さちこ');
+  assert.equal(nextQuestion(state, 0), 0);
+  state = saveAnswer(state, 0, 0, '  海の近くで育ちました。  ');
+  assert.equal(nextQuestion(state, 0), 1);
+  state = saveAnswer(state, 0, 0, '山の近くで育ちました。');
+  assert.equal(countAnswers(state), 1);
+  state = saveAnswer(state, 0, 1, '夕焼けが好きでした。');
+  state = saveAnswer(state, 0, 2, '元気な子でした。');
+  assert.equal(nextQuestion(state, 0), -1);
+  assert.equal(countAnswers(state, 1), 0);
+  assert.equal(countAnswers(state), 3);
+  assert.match(bookText(state), /さちこの人生の物語/);
+  assert.match(bookText(state), /第1章　はじまりの風景/);
+  assert.match(bookText(state), /山の近くで育ちました。/);
+  assert.doesNotMatch(bookText(state), /海の近く|第2章/);
+});
+test('basic information persists with answers, the timeline orders supplied years and does not invent dates', () => {
+  assert.throws(() => saveProfile(emptyState(), { name: '  ' }));
+  assert.throws(() => saveProfile(emptyState(), { name: '母', birthYear: '2100' }));
+  let state = saveProfile(emptyState(), { name: '母', birthYear: '1960', birthplace: '尾道', childhoodFamily: '両親と兄' });
+  state = saveAnswer(state, 0, 0, '山のそばで育ちました。');
+  state = saveAnswer(state, 3, 0, '初めて就職した日。');
+  state = saveAnswer(state, 2, 0, '学生時代のお話。');
+  state.eventYears = { '3:0': '1980年ごろ', '2:0': '1975年ごろ' };
+  assert.deepEqual(timelineEntries(state).map(e => e.year), ['1960', '1975年ごろ', '1980年ごろ', '']);
+  assert.deepEqual(restoreState(JSON.stringify(state)), state);
+  assert.match(bookText(state), /生まれた年：1960/);
+  assert.match(bookText(state), /【1975年ごろ】/);
+  const legacy = restoreState(JSON.stringify({name:'母',answers:{'0:0':'以前の回答'},started:true}));
+  assert.equal(legacy.answers['0:0'], '以前の回答');
+  assert.equal(legacy.profileComplete, false);
+});
+test('blank and unknown answers are rejected and persisted state recovers safely', () => {
+  assert.throws(() => saveAnswer(emptyState(), 0, 0, '   '));
+  assert.throws(() => saveAnswer(emptyState(), 6, 0, '回答'));
+  assert.deepEqual(restoreState('not json'), emptyState());
+  const original = saveAnswer(emptyState('母'), 4, 2, '自分らしく生きてね。');
+  assert.deepEqual(restoreState(JSON.stringify(original)), original);
+  const recovered = restoreState(JSON.stringify({name:'母',answers:{'4:2':'言葉','10:1':'unknown','0:0':false},started:true}));
+  assert.deepEqual(recovered.answers, {'4:2':'言葉'});
+});
