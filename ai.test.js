@@ -46,3 +46,15 @@ test('the editor can request missing details even when source length meets the h
   assert.equal(result.body.needsMore,true);
   assert.equal(result.body.text,undefined);
 });
+test('final book generation accepts short answers and never requests more questions', async () => {
+  const result=await handleAI('book',{name:'母',profile:{},part:0,items:[{chapterIndex:0,question:'どこで育ちましたか？',answer:'尾道。'}]},'Bearer test-family-book',{env:{...env,MEMOIR_ACCESS_CODE:'test-family-book'},fetcher:async(_,options)=>{
+    const request=JSON.parse(options.body);
+    assert.match(request.messages[0].content,/追加質問を返したり/);
+    assert.match(request.messages[0].content,/素材が少なければ5000字未満/);
+    assert.equal(request.max_tokens,2600);
+    return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({text:'私が育ったのは尾道だった。'})}}]}));
+  }});
+  assert.equal(result.status,200);
+  assert.equal(result.body.text,'私が育ったのは尾道だった。');
+  assert.equal(result.body.needsMore,undefined);
+});

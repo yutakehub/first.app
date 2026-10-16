@@ -74,3 +74,13 @@ test('5000-character plan preserves old questions and counts only approved prose
   assert.equal(approvedCharacters(state),900);
   assert.equal(textLength('あ い\nう'),3);
 });
+test('finite interview preserves skips, generated book and recoverable generation checkpoints on reload', () => {
+  const state=emptyState('母');
+  state.skipped={'0:0':true,'99:0':true};
+  state.bookDraft={text:'本の本文',source:'source',approved:false};
+  state.bookWork={source:'source',parts:{0:'完成した章'}};
+  const restored=restoreState(JSON.stringify(state));
+  assert.deepEqual(restored.skipped,{'0:0':true});
+  assert.deepEqual(restored.bookDraft,state.bookDraft);
+  assert.deepEqual(restored.bookWork,state.bookWork);
+});

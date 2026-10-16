@@ -31,7 +31,12 @@ export function approvedCharacters(state) {
     return n + (d?.approved && d.source === sourceFingerprint(state, i) ? textLength(d.text) : 0);
   }, 0);
 }
-export const emptyState = (name = 'あなた') => ({ name, answers: {}, started: false, profile: { birthYear: '', birthplace: '', childhoodFamily: '' }, profileComplete: false, eventYears: {}, followups: {}, manuscripts: {} });
+export const emptyState = (name = 'あなた') => ({ name, answers: {}, started: false, profile: { birthYear: '', birthplace: '', childhoodFamily: '' }, profileComplete: false, eventYears: {}, followups: {}, manuscripts: {}, skipped: {}, bookDraft: null, bookWork: null });
+export const interviewQuestions = () => chapters.flatMap((c, chapter) => c.questions.map((question, index) => ({ chapter, index, question, key: answerKey(chapter, index) })));
+export function bookSource(state) {
+  return chapters.flatMap((_, i) => chapterSource(state, i).map(item => ({ ...item, chapterIndex: i })));
+}
+export const bookFingerprint = state => JSON.stringify({ name: state.name, profile: state.profile, items: bookSource(state) });
 export function saveProfile(state, values) {
   const name = String(values.name || '').trim();
   const birthYear = String(values.birthYear || '').trim();
@@ -123,6 +128,16 @@ export function restoreState(raw) {
       const draft = data.manuscripts?.[i];
       if (typeof draft?.text === 'string' && typeof draft?.source === 'string') manuscripts[i] = {text: draft.text.slice(0, 30000), source: draft.source, origin: draft.origin === 'ai' ? 'ai' : 'manual', approved: Boolean(draft.approved)};
     });
-    return { name: data.name.slice(0, 40), answers, started: Boolean(data.started), profile, profileComplete: Boolean(data.profileComplete), eventYears, followups, manuscripts };
+    const skipped = {};
+    interviewQuestions().forEach(({key}) => { if(data.skipped?.[key] === true) skipped[key] = true; });
+    const d = data.bookDraft;
+    const bookDraft = typeof d?.text === 'string' && typeof d?.source === 'string' ? { text: d.text.slice(0,30000), source: d.source, approved: Boolean(d.approved) } : null;
+    let bookWork = null;
+    if(typeof data.bookWork?.source === 'string' && data.bookWork.parts && typeof data.bookWork.parts === 'object') {
+      const parts = {};
+      chapters.forEach((_,i)=>{if(typeof data.bookWork.parts[i] === 'string' && data.bookWork.parts[i].trim()) parts[i]=data.bookWork.parts[i].slice(0,30000);});
+      bookWork = { source:data.bookWork.source, parts };
+    }
+    return { name: data.name.slice(0, 40), answers, started: Boolean(data.started), profile, profileComplete: Boolean(data.profileComplete), eventYears, followups, manuscripts, skipped, bookDraft, bookWork };
   } catch { return emptyState(); }
 }

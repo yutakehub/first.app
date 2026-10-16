@@ -5,7 +5,7 @@
     { "src": "api/*.js", "use": "@vercel/node", "config": { "maxDuration": 60 } }
   ],
   "routes": [
-    { "src": "/api/(status|followup|draft)", "dest": "/api/$1.js" },
+    { "src": "/api/(status|followup|draft|book)", "dest": "/api/$1.js" },
     { "handle": "filesystem" }
   ]
 }
