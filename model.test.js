@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyState, saveAnswer, countAnswers, nextQuestion, bookText, restoreState, saveProfile, timelineEntries, saveManuscript, sourceFingerprint, approvedChapters, manuscriptText, chapters, CHAPTER_TARGETS, BOOK_TARGET, textLength, materialStats, approvedCharacters } from './model.js';
+import { emptyState, saveAnswer, countAnswers, nextQuestion, bookText, restoreState, saveProfile, timelineEntries, saveManuscript, sourceFingerprint, approvedChapters, manuscriptText, chapters, CHAPTER_TARGETS, BOOK_TARGET, textLength, materialStats, approvedCharacters, sanitizeOptionalPlan, fallbackOptionalPlan, bookSource, bookFingerprint } from './model.js';
 test('answers advance chapters, updates do not inflate progress, and the book retains the author’s words', () => {
   let state = emptyState('さちこ');
   assert.equal(nextQuestion(state, 0), 0);
@@ -83,4 +83,24 @@ test('finite interview preserves skips, generated book and recoverable generatio
   assert.deepEqual(restored.skipped,{'0:0':true});
   assert.deepEqual(restored.bookDraft,state.bookDraft);
   assert.deepEqual(restored.bookWork,state.bookWork);
+});
+test('optional questions are capped at ten, survive reload, and their answers reach the book', () => {
+  const plan=sanitizeOptionalPlan(Array.from({length:15},(_,i)=>({chapterIndex:0,question:`幼い頃の具体的な出来事${i}を教えてください。`})));
+  assert.equal(plan.length,10);
+  let state=saveAnswer(emptyState('母'),0,0,'尾道');
+  const before=bookFingerprint(state);
+  state.optionalInterview={questions:plan,answers:{0:'祖母と祭りへ行った。'},skipped:{1:true},done:false};
+  const restored=restoreState(JSON.stringify(state));
+  assert.deepEqual(restored.optionalInterview,state.optionalInterview);
+  assert.equal(bookSource(restored).length,2);
+  assert.equal(bookSource(restored)[1].answer,'祖母と祭りへ行った。');
+  assert.notEqual(bookFingerprint(restored),before);
+  assert.equal(sanitizeOptionalPlan([{chapterIndex:0,question:chapters[0].questions[0]},{chapterIndex:0,question:'  新しい質問？ '},{chapterIndex:0,question:'新しい質問?'},{chapterIndex:99,question:'不明'}]).length,1);
+});
+test('fallback optional questions only cover sparse answered chapters and can be unnecessary', () => {
+  const state=saveAnswer(emptyState('母'),0,0,'尾道');
+  const plan=fallbackOptionalPlan(state);
+  assert.ok(plan.length>0&&plan.length<=10);
+  assert.ok(plan.every(q=>q.chapterIndex===0));
+  assert.deepEqual(fallbackOptionalPlan(emptyState()),[]);
 });

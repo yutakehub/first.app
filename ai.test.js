@@ -58,3 +58,19 @@ test('final book generation accepts short answers and never requests more questi
   assert.equal(result.body.text,'私が育ったのは尾道だった。');
   assert.equal(result.body.needsMore,undefined);
 });
+test('optional AI plan uses skipped-topic context, validates questions and enforces the global ten-question limit', async () => {
+  const result=await handleAI('supplement',{name:'母',profile:{},items:[{chapterIndex:0,question:'出生地',answer:'尾道'}],skippedQuestions:['話したくない話題']},'Bearer optional-test',{env:{...env,MEMOIR_ACCESS_CODE:'optional-test'},fetcher:async(_,options)=>{
+    const request=JSON.parse(options.body);
+    assert.match(request.messages[0].content,/0〜10問/);
+    assert.match(request.messages[0].content,/答えたくない可能性/);
+    assert.match(request.messages[1].content,/話したくない話題/);
+    return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({questions:Array.from({length:15},(_,i)=>({chapterIndex:0,question:`追加の場面${i}を教えてください。`}))})}}]}));
+  }});
+  assert.equal(result.status,200);
+  assert.equal(result.body.questions.length,10);
+});
+test('AI may decide zero additional questions are necessary', async () => {
+  const result=await handleAI('supplement',{items:[{chapterIndex:0,question:'場所',answer:'尾道'}]},'Bearer optional-zero',{env:{...env,MEMOIR_ACCESS_CODE:'optional-zero'},fetcher:async()=>new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({questions:[]})}}]}))});
+  assert.equal(result.status,200);
+  assert.deepEqual(result.body.questions,[]);
+});

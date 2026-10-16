@@ -16,6 +16,7 @@ const additionalQuestions = [
   ['人生を振り返って、ご自身らしい選択だったと思う出来事はありますか？', '今、感謝を伝えたい人は誰ですか？その理由を教えてください。', 'この本を読む家族に、最後にどんな言葉を残したいですか？']
 ];
 export const BOOK_TARGET = 5000;
+export const OPTIONAL_LIMIT = 10;
 export const CHAPTER_TARGETS = [900, 900, 900, 1000, 900, 400];
 chapters.forEach((c, i) => { c.questions.push(...additionalQuestions[i]); });
 export const textLength = text => Array.from(String(text || '').replace(/\s/g, '')).length;
@@ -31,10 +32,41 @@ export function approvedCharacters(state) {
     return n + (d?.approved && d.source === sourceFingerprint(state, i) ? textLength(d.text) : 0);
   }, 0);
 }
-export const emptyState = (name = 'あなた') => ({ name, answers: {}, started: false, profile: { birthYear: '', birthplace: '', childhoodFamily: '' }, profileComplete: false, eventYears: {}, followups: {}, manuscripts: {}, skipped: {}, bookDraft: null, bookWork: null });
+export const emptyState = (name = 'あなた') => ({ name, answers: {}, started: false, profile: { birthYear: '', birthplace: '', childhoodFamily: '' }, profileComplete: false, eventYears: {}, followups: {}, manuscripts: {}, skipped: {}, bookDraft: null, bookWork: null, optionalInterview: null });
 export const interviewQuestions = () => chapters.flatMap((c, chapter) => c.questions.map((question, index) => ({ chapter, index, question, key: answerKey(chapter, index) })));
 export function bookSource(state) {
-  return chapters.flatMap((_, i) => chapterSource(state, i).map(item => ({ ...item, chapterIndex: i })));
+  const basic = chapters.flatMap((_, i) => chapterSource(state, i).map(item => ({ ...item, chapterIndex: i })));
+  const optional = (state.optionalInterview?.questions || []).flatMap((q, i) => {
+    const answer = state.optionalInterview.answers?.[i];
+    return answer ? [{ question:q.question, answer, chapterIndex:q.chapterIndex, year:'', followups:[] }] : [];
+  });
+  return [...basic, ...optional];
+}
+export function sanitizeOptionalPlan(items) {
+  if(!Array.isArray(items)) return [];
+  const normalize = text => text.normalize('NFKC').replace(/[\s？?。、]/g,'');
+  const seen = new Set(interviewQuestions().map(q=>normalize(q.question)));
+  const result = [];
+  for(const item of items) {
+    if(!Number.isInteger(item?.chapterIndex) || !chapters[item.chapterIndex] || typeof item.question!=='string') continue;
+    const question = item.question.trim();
+    if(!question || question.length>1000 || seen.has(normalize(question))) continue;
+    seen.add(normalize(question));result.push({chapterIndex:item.chapterIndex,question});
+    if(result.length===OPTIONAL_LIMIT) break;
+  }
+  return result;
+}
+export function fallbackOptionalPlan(state) {
+  const prompts = [
+    ['幼い頃のある一日を思い出すと、いちばん鮮明な場面は何ですか？','その頃の暮らしで、今の自分にもつながっている習慣はありますか？'],
+    ['家族の誰かにしてもらったことで、今も心に残っていることはありますか？','ご家族に言われた言葉で、今も覚えているものはありますか？'],
+    ['若い頃に大きな決断をした場面を、ひとつ教えてください。','青春時代のご自身に声をかけるなら、何と伝えますか？'],
+    ['仕事や暮らしの転機で、何を一番大切にして選びましたか？','うまくいかない時期に支えになった人や言葉はありますか？'],
+    ['お子さんに後から伝えておきたい、当時のご自身の気持ちはありますか？','家族と過ごした、ごく普通だけれど忘れられない一日を教えてください。'],
+    ['今の暮らしの中で、これからも大切にしたいことは何ですか？','これまでの人生を一言で表すなら、どんな言葉になりますか？']
+  ];
+  const gaps = chapters.map((_, i)=>({chapterIndex:i,ratio:materialStats(state,i).characters/CHAPTER_TARGETS[i]})).filter(g=>g.ratio<0.6 && chapterSource(state,g.chapterIndex).length>0).sort((a,b)=>a.ratio-b.ratio);
+  return sanitizeOptionalPlan([0,1].flatMap(round=>gaps.map(g=>({chapterIndex:g.chapterIndex,question:prompts[g.chapterIndex][round]}))));
 }
 export const bookFingerprint = state => JSON.stringify({ name: state.name, profile: state.profile, items: bookSource(state) });
 export function saveProfile(state, values) {
@@ -138,6 +170,20 @@ export function restoreState(raw) {
       chapters.forEach((_,i)=>{if(typeof data.bookWork.parts[i] === 'string' && data.bookWork.parts[i].trim()) parts[i]=data.bookWork.parts[i].slice(0,30000);});
       bookWork = { source:data.bookWork.source, parts };
     }
-    return { name: data.name.slice(0, 40), answers, started: Boolean(data.started), profile, profileComplete: Boolean(data.profileComplete), eventYears, followups, manuscripts, skipped, bookDraft, bookWork };
+    let optionalInterview = null;
+    if(Array.isArray(data.optionalInterview?.questions)) {
+      // Reject malformed stored plans rather than reindexing answers onto different questions.
+      const raw = data.optionalInterview.questions.slice(0,OPTIONAL_LIMIT);
+      const normalized = sanitizeOptionalPlan(raw);
+      if(normalized.length===raw.length) {
+        const optionalAnswers={}, optionalSkipped={};
+        normalized.forEach((_, i)=>{
+          if(typeof data.optionalInterview.answers?.[i]==='string' && data.optionalInterview.answers[i].trim()) optionalAnswers[i]=data.optionalInterview.answers[i].slice(0,10000);
+          if(data.optionalInterview.skipped?.[i]===true) optionalSkipped[i]=true;
+        });
+        optionalInterview={questions:normalized,answers:optionalAnswers,skipped:optionalSkipped,done:Boolean(data.optionalInterview.done)};
+      }
+    }
+    return { name: data.name.slice(0, 40), answers, started: Boolean(data.started), profile, profileComplete: Boolean(data.profileComplete), eventYears, followups, manuscripts, skipped, bookDraft, bookWork, optionalInterview };
   } catch { return emptyState(); }
 }
