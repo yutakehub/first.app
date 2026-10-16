@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyState, saveAnswer, countAnswers, nextQuestion, bookText, restoreState, saveProfile, timelineEntries, saveManuscript, sourceFingerprint, approvedChapters, manuscriptText } from './model.js';
+import { emptyState, saveAnswer, countAnswers, nextQuestion, bookText, restoreState, saveProfile, timelineEntries, saveManuscript, sourceFingerprint, approvedChapters, manuscriptText, chapters, CHAPTER_TARGETS, BOOK_TARGET, textLength, materialStats, approvedCharacters } from './model.js';
 test('answers advance chapters, updates do not inflate progress, and the book retains the author’s words', () => {
   let state = emptyState('さちこ');
   assert.equal(nextQuestion(state, 0), 0);
@@ -10,7 +10,7 @@ test('answers advance chapters, updates do not inflate progress, and the book re
   assert.equal(countAnswers(state), 1);
   state = saveAnswer(state, 0, 1, '夕焼けが好きでした。');
   state = saveAnswer(state, 0, 2, '元気な子でした。');
-  assert.equal(nextQuestion(state, 0), -1);
+  assert.equal(nextQuestion(state, 0), 3);
   assert.equal(countAnswers(state, 1), 0);
   assert.equal(countAnswers(state), 3);
   assert.match(bookText(state), /さちこの人生の物語/);
@@ -58,4 +58,19 @@ test('blank and unknown answers are rejected and persisted state recovers safely
   assert.deepEqual(restoreState(JSON.stringify(original)), original);
   const recovered = restoreState(JSON.stringify({name:'母',answers:{'4:2':'言葉','10:1':'unknown','0:0':false},started:true}));
   assert.deepEqual(recovered.answers, {'4:2':'言葉'});
+});
+test('5000-character plan preserves old questions and counts only approved prose, not notes or whitespace', () => {
+  assert.equal(CHAPTER_TARGETS.reduce((n,x)=>n+x,0),BOOK_TARGET);
+  assert.equal(chapters.reduce((n,c)=>n+c.questions.length,0),36);
+  const legacy=restoreState(JSON.stringify({name:'母',answers:{'0:0':'尾道で育った。'},started:true}));
+  assert.equal(legacy.answers['0:0'],'尾道で育った。');
+  assert.match(chapters[0].questions[0],/どんな場所/);
+  assert.equal(nextQuestion(legacy,0),1);
+  legacy.followups['0:0']=[{question:'誰と？',answer:'兄と海へ行った。'}];
+  assert.equal(materialStats(legacy,0).characters,textLength('尾道で育った。兄と海へ行った。'));
+  let state=saveManuscript(legacy,0,'あ'.repeat(900)+'\n\n  ','ai');
+  assert.equal(approvedCharacters(state),0);
+  state.manuscripts[0].approved=true;
+  assert.equal(approvedCharacters(state),900);
+  assert.equal(textLength('あ い\nう'),3);
 });

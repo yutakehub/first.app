@@ -6,6 +6,31 @@ export const chapters = [
   { title: '大切なあなたへ', sub: '子どもに伝えたいこと', icon: 'heart', questions: ['親になった日の気持ちを覚えていますか？', '子どもと過ごした日々で、心に残っていることは何ですか？', 'これからの子どもに、伝えておきたい言葉はありますか？'] },
   { title: 'これからの物語', sub: '今とこれから', icon: 'leaf', questions: ['今、幸せを感じるのはどんなときですか？', 'これからやってみたいことはありますか？', 'あなたにとって、よい人生とはどんな人生でしょうか？'] }
 ];
+// Existing question indexes remain stable so earlier answers stay attached to the same question.
+const additionalQuestions = [
+  ['幼い頃、よく一緒に過ごした人は誰ですか？心に残る出来事を教えてください。', '子どもの頃、うれしかったことや、つらかったことをひとつ教えてください。', '生まれ育った場所を離れたり、暮らしが変わったりしたときのことを覚えていますか？'],
+  ['ご家族は、どんな仕事や毎日の暮らしをしていましたか？', '家族の中で、特に影響を受けた人は誰ですか？具体的な出来事も教えてください。', '大人になってから、ご家族の見え方が変わった経験はありますか？'],
+  ['進学や進路は、どのように決めましたか？', '学生時代の失敗や挫折で、今も覚えている出来事はありますか？', '学校を離れて次の人生へ進む頃、どんな気持ちでしたか？'],
+  ['仕事で特に心に残る出来事を、出会った人や当時の状況と一緒に教えてください。', '働き方や住む場所を変えた経験があれば、何をきっかけに決めましたか？', '仕事や暮らしを通して、若い頃と考え方が変わったことはありますか？'],
+  ['家族が増える前は、どんな暮らしをしていましたか？大切な出会いも教えてください。', '子育てで悩んだ時期はありましたか？どう向き合いましたか？', 'お子さんにはまだ話したことのない、家族との思い出はありますか？'],
+  ['人生を振り返って、ご自身らしい選択だったと思う出来事はありますか？', '今、感謝を伝えたい人は誰ですか？その理由を教えてください。', 'この本を読む家族に、最後にどんな言葉を残したいですか？']
+];
+export const BOOK_TARGET = 5000;
+export const CHAPTER_TARGETS = [900, 900, 900, 1000, 900, 400];
+chapters.forEach((c, i) => { c.questions.push(...additionalQuestions[i]); });
+export const textLength = text => Array.from(String(text || '').replace(/\s/g, '')).length;
+export function materialStats(state, chapter) {
+  const items = chapterSource(state, chapter);
+  const characters = items.reduce((n, item) => n + textLength(item.answer) + item.followups.reduce((m, f) => m + textLength(f.answer), 0), 0);
+  const target = CHAPTER_TARGETS[chapter];
+  return { characters, target, minimum: Math.ceil(target * 0.35), answered: items.length };
+}
+export function approvedCharacters(state) {
+  return chapters.reduce((n, _, i) => {
+    const d = state.manuscripts?.[i];
+    return n + (d?.approved && d.source === sourceFingerprint(state, i) ? textLength(d.text) : 0);
+  }, 0);
+}
 export const emptyState = (name = 'あなた') => ({ name, answers: {}, started: false, profile: { birthYear: '', birthplace: '', childhoodFamily: '' }, profileComplete: false, eventYears: {}, followups: {}, manuscripts: {} });
 export function saveProfile(state, values) {
   const name = String(values.name || '').trim();
