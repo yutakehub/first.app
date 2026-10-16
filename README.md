@@ -26,7 +26,7 @@ npm run build
 ## Vercelで公開・AIを接続
 
 1. VercelでGitHubの`yutakehub/first.app`をImport。
-2. リポジトリの`vercel.json`を使用（build: `npm run build`、output: `dist`）。
+2. リポジトリの`vercel.json`を使用。静的画面を`@vercel/static-build`、3つのAPIを`@vercel/node`で明示的に分けています。管理画面のFramework Presetに依存せず、`server.js`を起動する構成にはしません。開発専用サーバーは`scripts/dev-server.js`です。
 3. VercelのEnvironment Variablesに以下を設定し、DeployまたはRedeploy。
    - `MEMOIR_AI_KEY`: OpenAI APIキー。値はVercelの秘密情報として保存し、チャットやGitへ書かない。
    - `MEMOIR_ACCESS_CODE`: 家族にだけ伝える十分に長い合言葉。匿名利用の防止に必要。
@@ -37,7 +37,7 @@ npm run build
 
 AI処理時には基本情報と対象章のお話をOpenAIへ送信します。AIには、出来事・感情・会話・年代を創作せず、本人の一人称で文脈をつなぐよう指示します。指示だけで完全な事実性は保証できないため、本人による確認・修正が必要です。原稿は自動採用されません。サーバーは回答や生成した原稿を保存しません。
 
-現在の環境にはAIキー・合言葉・Vercel認証がなく、実際のAI通信・本番デプロイは未検証です。10件のローカルテストおよびブラウザ操作で、保存・再開・追加質問・原稿の確認・編集・採用・ダウンロードを検証しています。AIの応答はテスト用データで検証し、実際の生成品質を検証したものではありません。
+現在の環境にはAIキー・合言葉・Vercel認証がなく、実際のAI通信・本番デプロイは未検証です。12件のローカルテストおよびブラウザ操作で、保存・再開・追加質問・原稿の確認・編集・採用・ダウンロードを検証しています。AIの応答はテスト用データで検証し、実際の生成品質を検証したものではありません。
 
 ## 約5,000字の自分史を目指す取材
 

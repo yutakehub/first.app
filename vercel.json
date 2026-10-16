@@ -1,5 +1,11 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "functions": { "api/*.js": { "maxDuration": 60 } }
+  "version": 2,
+  "builds": [
+    { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } },
+    { "src": "api/*.js", "use": "@vercel/node", "config": { "maxDuration": 60 } }
+  ],
+  "routes": [
+    { "src": "/api/(status|followup|draft)", "dest": "/api/$1.js" },
+    { "handle": "filesystem" }
+  ]
 }
