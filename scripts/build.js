@@ -1,4 +1,9 @@
 import { mkdir, copyFile, cp, readFile, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+for (const file of ['app.js', 'model.js']) {
+  const result = spawnSync(process.execPath, ['--check', file], { stdio: 'inherit' });
+  if (result.status !== 0) process.exit(result.status || 1);
+}
 await mkdir('dist', { recursive: true });
 for (const file of ['index.html', 'style.css', 'app.js', 'model.js']) await copyFile(file, `dist/${file}`);
 await cp('public', 'dist/public', { recursive: true });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyState, saveAnswer, countAnswers, nextQuestion, bookText, restoreState, saveProfile, timelineEntries, saveManuscript, sourceFingerprint, approvedChapters, manuscriptText, chapters, CHAPTER_TARGETS, BOOK_TARGET, textLength, materialStats, approvedCharacters, sanitizeOptionalPlan, fallbackOptionalPlan, bookSource, bookFingerprint } from './model.js';
+import { emptyState, saveAnswer, countAnswers, nextQuestion, bookText, restoreState, saveProfile, timelineEntries, saveManuscript, sourceFingerprint, approvedChapters, manuscriptText, chapters, CHAPTER_TARGETS, BOOK_TARGET, textLength, materialStats, approvedCharacters, sanitizeOptionalPlan, fallbackOptionalPlan, bookSource, bookFingerprint, answerExportText, answerExportFilename } from './model.js';
 test('answers advance chapters, updates do not inflate progress, and the book retains the author’s words', () => {
   let state = emptyState('さちこ');
   assert.equal(nextQuestion(state, 0), 0);
@@ -103,4 +103,34 @@ test('fallback optional questions only cover sparse answered chapters and can be
   assert.ok(plan.length>0&&plan.length<=10);
   assert.ok(plan.every(q=>q.chapterIndex===0));
   assert.deepEqual(fallbackOptionalPlan(emptyState()),[]);
+});
+test('answer export includes the full interview, original text, optional and legacy answers and editing instructions', () => {
+  let state=saveProfile(emptyState(),{name:'母',birthYear:'1960',birthplace:'尾道',childhoodFamily:'両親と兄'});
+  state=saveAnswer(state,0,0,'海の近くで育ちました。\n祖母と歩きました。');
+  state.skipped['0:1']=true;
+  state.eventYears['0:0']='1970年ごろ';
+  state.followups['0:0']=[{question:'誰と？',answer:'祖母と。'}];
+  state.optionalInterview={questions:[{chapterIndex:0,question:'補足の思い出は？'}],answers:{0:'夏祭りのことです。'},skipped:{},done:true};
+  const text=answerExportText(state,new Date('2026-10-18T00:00:00Z'));
+  assert.match(text,/保存日：2026\/10\/18/);
+  assert.match(text,/お名前：母/);
+  assert.match(text,/生まれた年：1960/);
+  assert.match(text,/生まれた場所：尾道/);
+  assert.match(text,/幼い頃の家族：両親と兄/);
+  assert.match(text,/海の近くで育ちました。\n祖母と歩きました。/);
+  assert.match(text,/1970年ごろ/);
+  assert.match(text,/以前の追加質問：誰と？/);
+  assert.match(text,/夏祭りのことです。/);
+  assert.equal((text.match(/^質問\d+：/gm)||[]).length,36);
+  assert.match(text,/回答：［スキップ］/);
+  assert.match(text,/回答：［未回答］/);
+  assert.match(text,/約5,000字/);
+  assert.match(text,/創作しない/);
+  assert.match(text,/完成した本の原稿ではありません/);
+});
+test('export is available from a partial interview and creates a safe Japanese text filename', () => {
+  const state=saveAnswer(emptyState('母/父:家族?'),0,0,'途中の回答');
+  assert.equal(answerExportFilename(state),'母父家族さんの人生の回答.txt');
+  assert.match(answerExportText(state),/基本の回答：1 \/ 36問/);
+  assert.match(answerExportText(state),/途中の回答/);
 });

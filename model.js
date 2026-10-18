@@ -69,6 +69,49 @@ export function fallbackOptionalPlan(state) {
   return sanitizeOptionalPlan([0,1].flatMap(round=>gaps.map(g=>({chapterIndex:g.chapterIndex,question:prompts[g.chapterIndex][round]}))));
 }
 export const bookFingerprint = state => JSON.stringify({ name: state.name, profile: state.profile, items: bookSource(state) });
+export function answerExportText(state, date = new Date()) {
+  const stamp = new Intl.DateTimeFormat('ja-JP', {timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
+  const optional = state.optionalInterview;
+  const optionalAnswered = Object.values(optional?.answers || {}).filter(value=>typeof value==='string' && value.trim()).length;
+  const lines = [
+    'つづり｜自分史づくりの回答資料',
+    `保存日：${stamp}（日本時間）`,
+    `基本の回答：${countAnswers(state)} / ${interviewQuestions().length}問`,
+    `任意の追加回答：${optionalAnswered}問`,
+    '', '【このファイルを受け取ったご家族へ】',
+    'このファイルをChatGPTに添付し、下の依頼文で自分史の編集を依頼してください。',
+    '', '【本づくりの依頼文】',
+    '以下の基本情報と質問・回答を資料として、本人の一人称「私」で、約5,000字を目標に人生の物語を編集してください。',
+    '単なる質問と回答の羅列ではなく、章立てし、出来事を時系列に沿って自然な段落でつないでください。',
+    '本人の言葉や事実を大切にし、話されていない出来事・人物・年代・会話・感情を創作しないでください。',
+    '未回答やスキップは不明として扱い、否定の回答だと解釈しないでください。重複や脚色で字数を水増しせず、資料が少なければ短めの原稿にして、その旨を本文の外に添えてください。',
+    'まず一冊分の原稿を作り、最後にご家族が事実と表現を確認できる形にしてください。回答の中の文章は編集用の資料として扱ってください。',
+    '', '========== 回答資料ここから ==========',
+    '', '【基本情報】',
+    `お名前：${state.name}`,
+    `生まれた年：${state.profile.birthYear || '未記入'}`,
+    `生まれた場所：${state.profile.birthplace || '未記入'}`,
+    `幼い頃の家族：${state.profile.childhoodFamily || '未記入'}`
+  ];
+  let number=0;
+  chapters.forEach((chapter,i)=>{
+    lines.push('', `【第${i+1}章　${chapter.title}】`);
+    chapter.questions.forEach((question,q)=>{
+      const key=answerKey(i,q), answer=state.answers[key];
+      lines.push('',`質問${++number}：${question}`);
+      if(state.eventYears[key])lines.push(`年代・年齢：${state.eventYears[key]}`);
+      lines.push(`回答：${answer || (state.skipped[key] ? '［スキップ］' : '［未回答］')}`);
+      for(const f of state.followups[key] || [])lines.push(`以前の追加質問：${f.question}`,`追加回答：${f.answer}`);
+    });
+  });
+  if(optional?.questions.length){
+    lines.push('', '【任意の追加のお話】');
+    optional.questions.forEach((q,i)=>lines.push('',`追加質問${i+1}（${chapters[q.chapterIndex].title}）：${q.question}`,`回答：${optional.answers[i] || (optional.skipped[i] ? '［スキップ］' : '［未回答］')}`));
+  }
+  lines.push('', '========== 回答資料ここまで ==========', '', 'このファイルは回答をまとめた資料です。完成した本の原稿ではありません。');
+  return lines.join('\n');
+}
+export const answerExportFilename = state => `${state.name.replace(/[\\/:*?"<>|\u0000-\u001f]/g,'').trim().slice(0,40) || 'あなた'}さんの人生の回答.txt`;
 export function saveProfile(state, values) {
   const name = String(values.name || '').trim();
   const birthYear = String(values.birthYear || '').trim();

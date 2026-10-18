@@ -1,11 +1,9 @@
 {
   "version": 2,
   "builds": [
-    { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } },
-    { "src": "api/*.js", "use": "@vercel/node", "config": { "maxDuration": 60 } }
+    { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } }
   ],
   "routes": [
-    { "src": "/api/(status|followup|draft|book|supplement)", "dest": "/api/$1.js" },
     { "handle": "filesystem" }
   ]
 }
