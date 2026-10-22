@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyState, saveAnswer, countAnswers, nextQuestion, bookText, restoreState, saveProfile, timelineEntries, saveManuscript, sourceFingerprint, approvedChapters, manuscriptText, chapters, CHAPTER_TARGETS, BOOK_TARGET, textLength, materialStats, approvedCharacters, sanitizeOptionalPlan, fallbackOptionalPlan, bookSource, bookFingerprint, answerExportText, answerExportFilename } from './model.js';
+import { emptyState, saveAnswer, countAnswers, nextQuestion, bookText, restoreState, saveProfile, timelineEntries, saveManuscript, sourceFingerprint, approvedChapters, manuscriptText, chapters, CHAPTER_TARGETS, BOOK_TARGET, textLength, materialStats, approvedCharacters, sanitizeOptionalPlan, fallbackOptionalPlan, bookSource, bookFingerprint, answerExportText, answerExportFilename, nextSupplementBatch, SUPPLEMENT_LIMIT } from './model.js';
 test('answers advance chapters, updates do not inflate progress, and the book retains the author’s words', () => {
   let state = emptyState('さちこ');
   assert.equal(nextQuestion(state, 0), 0);
@@ -124,7 +124,7 @@ test('answer export includes the full interview, original text, optional and leg
   assert.equal((text.match(/^質問\d+：/gm)||[]).length,36);
   assert.match(text,/回答：［スキップ］/);
   assert.match(text,/回答：［未回答］/);
-  assert.match(text,/約5,000字/);
+  assert.match(text,/約20,000字/);
   assert.match(text,/創作しない/);
   assert.match(text,/完成した本の原稿ではありません/);
 });
@@ -133,4 +133,24 @@ test('export is available from a partial interview and creates a safe Japanese t
   assert.equal(answerExportFilename(state),'母父家族さんの人生の回答.txt');
   assert.match(answerExportText(state),/基本の回答：1 \/ 36問/);
   assert.match(answerExportText(state),/途中の回答/);
+});
+
+test('memoir supplements are opt-in batches, avoid repetition, survive beyond ten and stop at thirty', () => {
+  let state=emptyState('試験');
+  for(let c=0;c<6;c++) state=saveAnswer(state,c,0,'覚えている場所。');
+  assert.equal(nextSupplementBatch(emptyState()).length,0);
+  state.optionalInterview={questions:[],answers:{},skipped:{},done:false};
+  for(let round=0;round<6;round++) {
+    const batch=nextSupplementBatch(state);
+    assert.equal(batch.length,5);
+    state.optionalInterview.questions.push(...batch);
+    state.optionalInterview.questions.forEach((_,i)=>{if(i%2)state.optionalInterview.skipped[i]=true;else state.optionalInterview.answers[i]='実際の出来事。';});
+    state=restoreState(JSON.stringify(state));
+    assert.equal(state.optionalInterview.questions.length,(round+1)*5);
+  }
+  assert.equal(state.optionalInterview.questions.length,SUPPLEMENT_LIMIT);
+  assert.equal(new Set(state.optionalInterview.questions.map(q=>q.question)).size,30);
+  assert.equal(nextSupplementBatch(state).length,0);
+  assert.match(answerExportText(state),/追加質問30/);
+  assert.match(answerExportText(state),/3〜5問ずつ/);
 });

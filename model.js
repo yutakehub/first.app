@@ -16,7 +16,9 @@ const additionalQuestions = [
   ['人生を振り返って、ご自身らしい選択だったと思う出来事はありますか？', '今、感謝を伝えたい人は誰ですか？その理由を教えてください。', 'この本を読む家族に、最後にどんな言葉を残したいですか？']
 ];
 export const BOOK_TARGET = 5000;
-export const OPTIONAL_LIMIT = 10;
+export const OPTIONAL_LIMIT = 10; // Legacy AI request limit.
+export const SUPPLEMENT_LIMIT = 30;
+export const MEMOIR_TARGET = 20000;
 export const CHAPTER_TARGETS = [900, 900, 900, 1000, 900, 400];
 chapters.forEach((c, i) => { c.questions.push(...additionalQuestions[i]); });
 export const textLength = text => Array.from(String(text || '').replace(/\s/g, '')).length;
@@ -42,7 +44,7 @@ export function bookSource(state) {
   });
   return [...basic, ...optional];
 }
-export function sanitizeOptionalPlan(items) {
+export function sanitizeOptionalPlan(items, limit = OPTIONAL_LIMIT) {
   if(!Array.isArray(items)) return [];
   const normalize = text => text.normalize('NFKC').replace(/[\s？?。、]/g,'');
   const seen = new Set(interviewQuestions().map(q=>normalize(q.question)));
@@ -52,7 +54,7 @@ export function sanitizeOptionalPlan(items) {
     const question = item.question.trim();
     if(!question || question.length>1000 || seen.has(normalize(question))) continue;
     seen.add(normalize(question));result.push({chapterIndex:item.chapterIndex,question});
-    if(result.length===OPTIONAL_LIMIT) break;
+    if(result.length===limit) break;
   }
   return result;
 }
@@ -68,6 +70,31 @@ export function fallbackOptionalPlan(state) {
   const gaps = chapters.map((_, i)=>({chapterIndex:i,ratio:materialStats(state,i).characters/CHAPTER_TARGETS[i]})).filter(g=>g.ratio<0.6 && chapterSource(state,g.chapterIndex).length>0).sort((a,b)=>a.ratio-b.ratio);
   return sanitizeOptionalPlan([0,1].flatMap(round=>gaps.map(g=>({chapterIndex:g.chapterIndex,question:prompts[g.chapterIndex][round]}))));
 }
+// Local suggestions use answer length, not AI interpretation. Never promise a manuscript length.
+export function memoirMaterial(state) {
+  const items = bookSource(state);
+  return { characters: items.reduce((n, item) => n + textLength(item.answer) + item.followups.reduce((m, f) => m + textLength(f.answer), 0), 0) };
+}
+const scenePrompts = [
+  ['子どもの頃に暮らした場所を、覚えている順に教えてください。年齢や家の様子も、分かる範囲でお願いします。','子どもの頃、家を出て帰るまでの一日を思い出すと、どんなことをしていましたか？','幼い頃の友達との出来事をひとつ、場所や実際にあったことと一緒に教えてください。','子どもの頃に暮らしが変わったことがあれば、その前後の生活を教えてください。','子どもの頃に好きだった場所で過ごした時間を、ひとつ詳しく教えてください。'],
+  ['子どもの頃の食卓で覚えている一場面を、食べ物や一緒にいた人とともに教えてください。','家族と出かけたことがあれば、ひとつの行き先と、そこで実際にあったことを教えてください。','家族の誰かと過ごした一日で、詳しく覚えていることはありますか？','家での行事や習慣で覚えているものがあれば、どのように過ごしたか教えてください。','大人になってから家族と過ごした時間で、残しておきたい出来事はありますか？'],
+  ['学生時代の普通の一日を、学校や放課後の過ごし方とともに教えてください。','進路を決めた頃、どんな選択肢があり、どのように決めたか覚えていますか？','学生時代に誰かと過ごした時間で、具体的に覚えている場面はありますか？','学校を離れて次の生活を始めた頃の、実際の出来事を教えてください。','若い頃によく行った場所があれば、そこで何をしていたか教えてください。'],
+  ['最初の仕事に就くまで、どのような準備や出来事がありましたか？時期も分かる範囲でお願いします。','仕事や日々の役割で、ある一日を朝から振り返ると、何をしていましたか？','仕事や暮らしの中で覚えている出来事を、関わった人や状況とともに教えてください。','人生の転機について、その前と後で日常がどう変わったか教えてください。','住む場所や働き方を選んだとき、具体的にどのように決めたか教えてください。'],
+  ['大切な人との出会いについて、いつ、どこで、どのように知り合ったか教えてください。','家族が増えたり暮らしが変わった頃の一日を、覚えている範囲で教えてください。','家族と過ごした日の出来事をひとつ、実際に何があったか詳しく教えてください。','家庭と仕事などを両立した経験があれば、当時の一日の過ごし方を教えてください。','家族に伝えたい言葉につながる、実際の経験があれば教えてください。'],
+  ['今の普通の一日を、朝起きてから夜まで、どのように過ごしていますか？','今、大切な人や動物、好きなことと過ごす時間について、具体的な場面を教えてください。','最近、幸せを感じた出来事をひとつ、何があったか詳しく教えてください。','今も続けている習慣があれば、始めたきっかけと普段の様子を教えてください。','これまでを振り返って、今の暮らしにつながっていると思う経験を教えてください。']
+];
+export function nextSupplementBatch(state) {
+  const existing = state.optionalInterview?.questions || [];
+  const room = SUPPLEMENT_LIMIT - existing.length;
+  if(room <= 0) return [];
+  const source = bookSource(state);
+  const gaps = chapters.map((_, chapterIndex) => ({chapterIndex, characters: source.filter(item => item.chapterIndex === chapterIndex).reduce((n, item) => n + textLength(item.answer), 0)}))
+    .filter(g => chapterSource(state, g.chapterIndex).length > 0 && g.characters < 2500)
+    .sort((a,b) => a.characters - b.characters);
+  const candidates = scenePrompts[0].flatMap((_, round) => gaps.map(g => ({chapterIndex:g.chapterIndex, question:scenePrompts[g.chapterIndex][round]})));
+  const used = new Set(existing.map(q => q.question));
+  return candidates.filter(q => !used.has(q.question)).slice(0, Math.min(5, room));
+}
 export const bookFingerprint = state => JSON.stringify({ name: state.name, profile: state.profile, items: bookSource(state) });
 export function answerExportText(state, date = new Date()) {
   const stamp = new Intl.DateTimeFormat('ja-JP', {timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
@@ -81,10 +108,11 @@ export function answerExportText(state, date = new Date()) {
     '', '【このファイルを受け取ったご家族へ】',
     'このファイルをChatGPTに添付し、下の依頼文で自分史の編集を依頼してください。',
     '', '【本づくりの依頼文】',
-    '以下の基本情報と質問・回答を資料として、本人の一人称「私」で、約5,000字を目標に人生の物語を編集してください。',
+    '以下の基本情報と質問・回答を資料として、本人の一人称「私」で、本文約20,000字を目標に人生の物語を編集してください。',
     '単なる質問と回答の羅列ではなく、章立てし、出来事を時系列に沿って自然な段落でつないでください。',
     '本人の言葉や事実を大切にし、話されていない出来事・人物・年代・会話・感情を創作しないでください。',
     '未回答やスキップは不明として扱い、否定の回答だと解釈しないでください。重複や脚色で字数を水増しせず、資料が少なければ短めの原稿にして、その旨を本文の外に添えてください。',
+    '資料が不足している場合は執筆前に、不足する具体的な出来事について3〜5問ずつ追加で質問してください。回答済みの内容やスキップした話題を繰り返し尋ねないでください。本文の文字数を確認し、目標との差がある場合はその旨を伝えてください。',
     'まず一冊分の原稿を作り、最後にご家族が事実と表現を確認できる形にしてください。回答の中の文章は編集用の資料として扱ってください。',
     '', '========== 回答資料ここから ==========',
     '', '【基本情報】',
@@ -216,8 +244,8 @@ export function restoreState(raw) {
     let optionalInterview = null;
     if(Array.isArray(data.optionalInterview?.questions)) {
       // Reject malformed stored plans rather than reindexing answers onto different questions.
-      const raw = data.optionalInterview.questions.slice(0,OPTIONAL_LIMIT);
-      const normalized = sanitizeOptionalPlan(raw);
+      const raw = data.optionalInterview.questions.slice(0,SUPPLEMENT_LIMIT);
+      const normalized = sanitizeOptionalPlan(raw, SUPPLEMENT_LIMIT);
       if(normalized.length===raw.length) {
         const optionalAnswers={}, optionalSkipped={};
         normalized.forEach((_, i)=>{
